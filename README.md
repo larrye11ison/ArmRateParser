@@ -50,5 +50,5 @@ The `ProcessWebSiteAsync()` method has an optional second parameter of type `IEn
 both `<li>` and `<img>` tags.
 
 ```powershell
-$adam = [ArmRateParser.Processor]::ProcessWebSiteAsync("https://www.wellsfargo.com/mortgage/cost-of-savings-index/", @("li", "img"))).GetAwaiter().GetResult()
+$adam = [ArmRateParser.Processor]::ProcessWebSiteAsync($url, @("li", "img"))).GetAwaiter().GetResult()
 ```
