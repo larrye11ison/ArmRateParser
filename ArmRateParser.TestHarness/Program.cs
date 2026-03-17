@@ -6,8 +6,10 @@ namespace ArmRateParser.TestHarness
     {
         private const string _outputDirectory = @"c:\users\pj\documents\armindex\output";
 
-        private static void Main(string[] args)
+        private static async System.Threading.Tasks.Task Main(string[] args)
         {
+            // Ensure Playwright Chromium is installed/updated daily before running
+
             //ProcessByRssFeed("http://www.federalreserve.gov/feeds/Data/H15_H15.XML");
 
             //var sourcesPath = @"C:\Users\pj\Documents\ArmIndex\ArmIndexRateSources.json";
@@ -16,7 +18,8 @@ namespace ArmRateParser.TestHarness
             //foreach (var source in sources)
             //{
             //var currentThing = $"{source.Source} - {source.Description}";
-            var res = ArmRateParser.Processor.ProcessWebSite("http://www.freddiemac.com/pmms/archive.html");
+            var res = await ArmRateParser.Processor.ProcessWebSiteAsync("https://www.wellsfargo.com/mortgage/cost-of-savings-index/");
+            
             Console.WriteLine(Newtonsoft.Json.JsonConvert.SerializeObject(res));
             //}
         }

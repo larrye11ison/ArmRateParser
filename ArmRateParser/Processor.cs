@@ -5,6 +5,7 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Web;
 using System.Xml.Linq;
 
@@ -41,7 +42,7 @@ namespace ArmRateParser
             var theDate = doc.Descendants(def + "channel")
                 .Descendants(dc + "date")
                 .FirstOrDefault();
-            var overallDate = DateTimeOffset.Parse(theDate.Value);
+            var overallDate = theDate != null ? DateTimeOffset.Parse(theDate.Value) : DateTimeOffset.MinValue;
 
             var items = doc.Descendants(def + "item")
                 .Select(i => new
@@ -62,43 +63,42 @@ namespace ArmRateParser
             };
         }
 
-        public static object ProcessWebSite(string url)
+        public static async Task<object> ProcessWebSiteAsync(string url, IEnumerable<string>? extraTagsToInclude = null)
         {
-            string theScript = PhantomConvenience.JavaScriptTemplate;
-            var cbPath = Path.GetDirectoryName(new Uri(typeof(Processor).Assembly.CodeBase).LocalPath);
-            var phantomPath = Path.Combine(cbPath, "phantomjs.exe");
+            await ArmRateParser.PlaywrightInstaller.EnsureChromiumInstalledAsync();
 
-            if (File.Exists(phantomPath) == false)
-            {
-                throw new FileNotFoundException($"PhantomJS executable not found at: {phantomPath}");
-            }
-
-            var jsFile = Path.GetTempFileName();
-
-            // Create a temp file path for the image... note that we are putting png on the end...
-            // I discovered that phantomjs (or whatever it ends up using internally to render the
-            // image) will SILENTLY FAIL if the path you give it doesn't have the extension on
-            // the end. This only took me like ten hours (almost literally) to figure out.
-            // ... OMFG I can't even...
             var imageOutputPath = $"{Path.GetTempFileName()}.png";
 
             var htmlOutputPath = Path.GetTempFileName();
 
-            File.WriteAllText(jsFile, theScript);
-
             var numberOfTimesIHaveTried = 0;
 
-            HtmlNodeCollection allTRtags = null;
+            HtmlNodeCollection? allTRtags = null;
             var xmlDataSetPath = string.Empty;
             var htmlDoc = new HtmlAgilityPack.HtmlDocument();
             var allTagsJsonFileName = string.Empty;
-            object phantomConsoleOutput = null;
+            string? playwrightErrorOutput = null;
+            var succeeded = false;
 
             // Since some web sites are apparently really sketchy, try multiple times to get some 
             // valid-looking HTML output before we give up.
-            while (numberOfTimesIHaveTried++ < WebSiteRetryCount && allTRtags == null)
+            while (numberOfTimesIHaveTried++ < WebSiteRetryCount && !succeeded)
             {
-                phantomConsoleOutput = PhantomConvenience.ExecutePhantomScript(phantomPath, jsFile, url, imageOutputPath, htmlOutputPath);
+                // Use Playwright to render the page and produce a screenshot + HTML output
+                try
+                {
+                    await PlaywrightExecutor.ExecutePlaywrightAsync(url, imageOutputPath, htmlOutputPath);
+                    succeeded = true;
+                }
+                catch (System.Exception ex)
+                {
+                    playwrightErrorOutput = ex.ToString();
+
+                    // this may be unnecessary - I found it helpful when we were previously using phantomjs to 
+                    // render the pages because it apparently needed extra time when an error occurred. 
+                    // But maybe Playwright doesn't have that issue.
+                    await Task.Delay(300);
+                }
 
                 htmlDoc.Load(htmlOutputPath);
 
@@ -108,59 +108,24 @@ namespace ArmRateParser
                 // or WhateverTF. By grouping on the parent in this way, it should - pretty much - also treat the rows
                 // so everything in one table is grouped together.
                 allTRtags = htmlDoc.DocumentNode.SelectNodes("//tr");
-                if (allTRtags == null)
-                {
-                    System.Threading.Thread.Sleep(300);
-                }
             }
-
-            if (allTRtags == null)
-            {
-                return new
-                {
-                    WebPageImagePath = imageOutputPath,
-                    WebPageHtmlPath = htmlOutputPath,
-                    AllTagsJsonPath = (string)null,//allTagsJsonFileName,
-                    DataSetXmlPath = (string)null,//xmlDataSetPath,
-                    PhantomConsoleOutput = phantomConsoleOutput
-                };
-            }
-            var groupedByTables = allTRtags.GroupBy(t => t.ParentNode.XPath);
-
-            var data = new DataSet();
-            foreach (var tableGroup in groupedByTables)
-            {
-                var dataTable = new DataTable();
-                dataTable.Columns.Add("rowid", typeof(int));
-
-                var currentRowNumber = 0;
-                foreach (var row in tableGroup)
-                {
-                    var cells = row.SelectNodes("td|th");
-                    if (cells == null || cells.Count == 0)
-                        continue;
-
-                    while (dataTable.Columns.Count < cells.Count() + 1)
-                        dataTable.Columns.Add($"Column_{dataTable.Columns.Count}", typeof(string));
-                    List<object> values = new List<object>();
-                    values.Add(currentRowNumber++);
-                    values.AddRange(cells.Select(i => Decrapify(i.InnerText)));
-                    dataTable.Rows.Add(values.ToArray());
-                }
-                data.Tables.Add(dataTable);
-            }
-
-            xmlDataSetPath = Path.GetTempFileName();
-            //Path.Combine(outputDirectory, $"{name}-DataSet.xml");
-            data.WriteXml(xmlDataSetPath, XmlWriteMode.WriteSchema);
 
             ////////////////////////////////////////////////////////////////////
             // now jam all the HTML nodes into a document that
-            // kinda has everything - on some sites, data exists outside
-            // the <table>, <td> and <th> tags
+            // kinda has everything - this is referred to as "all tags." 
+            // Although it's not truly "all," the idea is that it will contain
+            // all the tags we need to care about.
             ////////////////////////////////////////////////////////////////////
             var currentLineNumber = 0;
-            var allTheNodes = htmlDoc.DocumentNode.SelectNodes("//td|//th|//span|//div|//p|//h1|//h2|//h3|//h4");
+            const string defaultAllTags = "//td|//th|//span|//div|//p|//h1|//h2|//h3|//h4";
+            var allTagsQuery = defaultAllTags;
+            // if the caller specified extra tags to include, add those to the XPath query that finds all the nodes we want to include in the "all tags" dump
+            if (extraTagsToInclude != null)
+            {
+                var extraTagsQuery = string.Join("|", extraTagsToInclude.Select(t => $"//{t}"));
+                allTagsQuery += "|" + extraTagsQuery;
+            }
+            var allTheNodes = htmlDoc.DocumentNode.SelectNodes(allTagsQuery);
             var dataToWrite = from n in allTheNodes
                               select new
                               {
@@ -171,109 +136,49 @@ namespace ArmRateParser
             allTagsJsonFileName = Path.GetTempFileName();
             File.WriteAllText(allTagsJsonFileName, Newtonsoft.Json.JsonConvert.SerializeObject(dataToWrite, Newtonsoft.Json.Formatting.Indented));
 
+            if (allTRtags != null)
+            {
+                var groupedByTables = allTRtags.GroupBy(t => t.ParentNode.XPath);
+
+                var data = new DataSet();
+                foreach (var tableGroup in groupedByTables)
+                {
+                    var dataTable = new DataTable();
+                    dataTable.Columns.Add("rowid", typeof(int));
+
+                    var currentRowNumber = 0;
+                    foreach (var row in tableGroup)
+                    {
+                        var cells = row.SelectNodes("td|th");
+                        if (cells == null || cells.Count == 0)
+                            continue;
+
+                        while (dataTable.Columns.Count < cells.Count() + 1)
+                            dataTable.Columns.Add($"Column_{dataTable.Columns.Count}", typeof(string));
+                            
+                        List<object> values = [currentRowNumber++, .. cells.Select(i => Decrapify(i.InnerText))];
+                        // List<object> values = new List<object>();
+                        // values.Add(currentRowNumber++);
+                        // values.AddRange(cells.Select(i => Decrapify(i.InnerText)));
+                        
+                        dataTable.Rows.Add(values.ToArray());
+                    }
+                    data.Tables.Add(dataTable);
+                }
+
+                xmlDataSetPath = Path.GetTempFileName();
+                //Path.Combine(outputDirectory, $"{name}-DataSet.xml");
+                data.WriteXml(xmlDataSetPath, XmlWriteMode.WriteSchema);
+            }
+
             return new
             {
                 WebPageImagePath = imageOutputPath,
                 WebPageHtmlPath = htmlOutputPath,
                 AllTagsJsonPath = allTagsJsonFileName,
                 DataSetXmlPath = xmlDataSetPath,
-                PhantomConsoleOutput = phantomConsoleOutput
+                PlaywrightError = playwrightErrorOutput
             };
-
-            //using (var phantomJS = new PhantomJS())
-            //{
-            //    phantomJS.OutputReceived += (sender, e) =>
-            //    {
-            //        Console.WriteLine("PhantomJS output: {0}", e.Data);
-            //    };
-            //    phantomJS.ErrorReceived += (sender, e) =>
-            //    {
-            //        Console.Error.WriteLine("PhantomJS error: {0}", e.Data);
-            //    };
-
-            //    string theScript = PhantomConvenience.JavaScriptTemplate;
-            //    var cbPath = Path.GetDirectoryName(new Uri(typeof(Processor).Assembly.CodeBase).LocalPath);
-            //    var phantomPath = Path.Combine(cbPath, "phantomjs.exe");
-
-            //    if (File.Exists(phantomPath) == false)
-            //    {
-            //        throw new FileNotFoundException($"PhantomJS executable not found at: {phantomPath}");
-            //    }
-
-            //    phantomJS.PhantomJsExeName = phantomPath;
-            //    var imageOutputPath = Path.GetTempFileName();
-            //    Console.WriteLine($"Image output to: {imageOutputPath}");
-            //    //Path.Combine(outputDirectory, $"{name}.png");
-            //    var htmlOutputPath = Path.GetTempFileName();
-            //    //Path.Combine(outputDirectory, $"{name}.html");
-            //    phantomJS.RunScript(theScript, new string[] { url, imageOutputPath, htmlOutputPath });
-
-            //    return null;
-
-            //    var htmlDoc = new HtmlAgilityPack.HtmlDocument();
-            //    htmlDoc.Load(htmlOutputPath);
-
-            //    // Some tables have THEAD, some have TBODY, etc. so it gets a bit tricky. But we SHOULD be able
-            //    // to count on the fact that all the TD and TH tags are directly inside a row (TR). So find all the
-            //    // TR tags, but group them by their "parent" node - again, which may be a <table> or <thead> or <tbody>
-            //    // or WhateverTF. By grouping on the parent in this way, it should - pretty much - also treat the rows
-            //    // so everything in one table is grouped together.
-            //    var allTRtags = htmlDoc.DocumentNode.SelectNodes("//tr");
-            //    var groupedByTables = allTRtags.GroupBy(t => t.ParentNode.XPath);
-
-            //    var data = new DataSet();
-            //    foreach (var tableGroup in groupedByTables)
-            //    {
-            //        var dataTable = new DataTable();
-            //        dataTable.Columns.Add("rowid", typeof(int));
-
-            //        var currentRowNumber = 0;
-            //        foreach (var row in tableGroup)
-            //        {
-            //            var cells = row.SelectNodes("td|th");
-            //            if (cells == null || cells.Count == 0)
-            //                continue;
-
-            //            while (dataTable.Columns.Count < cells.Count() + 1)
-            //                dataTable.Columns.Add($"Column_{dataTable.Columns.Count}", typeof(string));
-            //            List<object> values = new List<object>();
-            //            values.Add(currentRowNumber++);
-            //            values.AddRange(cells.Select(i => Decrapify(i.InnerText)));
-            //            dataTable.Rows.Add(values.ToArray());
-            //        }
-            //        data.Tables.Add(dataTable);
-            //    }
-
-            //    var xmlDataSetPath = Path.GetTempFileName();
-            //    //Path.Combine(outputDirectory, $"{name}-DataSet.xml");
-            //    data.WriteXml(xmlDataSetPath, XmlWriteMode.WriteSchema);
-
-            //    ////////////////////////////////////////////////////////////////////
-            //    // now jam all the HTML nodes into a document that
-            //    // kinda has everything - on some sites, data exists outside
-            //    // the <table>, <td> and <th> tags
-            //    ////////////////////////////////////////////////////////////////////
-            //    var currentLineNumber = 0;
-            //    var allTheNodes = htmlDoc.DocumentNode.SelectNodes("//td|//th|//span|//div|//p");
-            //    var dataToWrite = from n in allTheNodes
-            //                      select new
-            //                      {
-            //                          Content = Decrapify(n.InnerText),
-            //                          LineNumber = currentLineNumber++,
-            //                          Tag = n.Name
-            //                      };
-            //    var allTagsJsonFileName = Path.GetTempFileName();
-            //    //Path.Combine(outputDirectory, $"{name}-tags.json");
-            //    File.WriteAllText(allTagsJsonFileName, Newtonsoft.Json.JsonConvert.SerializeObject(dataToWrite, Newtonsoft.Json.Formatting.Indented));
-
-            //    return new
-            //    {
-            //        WebPageImagePath = imageOutputPath,
-            //        WebPageHtmlPath = htmlOutputPath,
-            //        AllTagsJsonPath = allTagsJsonFileName,
-            //        DataSetXmlPath = xmlDataSetPath
-            //    };
-            //}
         }
 
         /// <summary>
