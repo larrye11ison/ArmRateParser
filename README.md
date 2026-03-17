@@ -28,7 +28,8 @@ Output is an object with several properties that are each the path to a temp fil
 add-type -path '.\ArmRateParser\bin\Release\net8.0\publish\ArmRateParser.dll'
 add-type -path '.\ArmRateParser\bin\Release\net8.0\publish\HtmlAgilityPack.dll'
 ## make the call - be sure to use .GetAwaiter().GetResult() !!
-$adam = [ArmRateParser.Processor]::ProcessWebSiteAsync("https://www.wellsfargo.com/mortgage/cost-of-savings-index/").GetAwaiter().GetResult()
+$url = 'https://www.wellsfargo.com/mortgage/cost-of-savings-index/'
+$adam = [ArmRateParser.Processor]::ProcessWebSiteAsync($url).GetAwaiter().GetResult()
 ## dump it out, bruv
 $adam 
 ```
