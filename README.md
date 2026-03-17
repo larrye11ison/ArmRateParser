@@ -46,8 +46,8 @@ PlaywrightError  :
 
 ## Customising the list of "all tags" tags
 
-The `ProcessWebSiteAsync()` method has an optional second parameter of type IEnumerable<string>. For ex., below I'm including 
-both <li> and <img> tags.
+The `ProcessWebSiteAsync()` method has an optional second parameter of type `IEnumerable<string>`. For ex., below I'm including 
+both `<li>` and `<img>` tags.
 
 ```powershell
 $adam = [ArmRateParser.Processor]::ProcessWebSiteAsync("https://www.wellsfargo.com/mortgage/cost-of-savings-index/", @("li", "img"))).GetAwaiter().GetResult()
