@@ -52,3 +52,14 @@ both `<li>` and `<img>` tags.
 ```powershell
 $adam = [ArmRateParser.Processor]::ProcessWebSiteAsync($url, @("li", "img"))).GetAwaiter().GetResult()
 ```
+
+## Re: the aforementioned "preprocessing" 
+
+More than one of the sites that I had to process were putting weird "extended" characters into their output. I'd (ultimately) be looking at 
+the InnerText property of a DIV or SPAN, but this would incglude weird unicode junk. All I cared about
+was a small number of very basic values from each site/page - either a date or an interest rate - so only basic ASCII characters were 
+meaningful. Therefore, I did not troubleshoot this extensively; instead, I simply "decrapify" the output by stripping any character that's 
+char code 160 or above.
+
+This means, for example, that the "ñ" character will be stripped from any Spanish text in the output. But for dates and interest rates,
+this does not present a problem. 
