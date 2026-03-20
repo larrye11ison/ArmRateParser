@@ -18,7 +18,10 @@ namespace ArmRateParser.TestHarness
             //foreach (var source in sources)
             //{
             //var currentThing = $"{source.Source} - {source.Description}";
-            var res = await ArmRateParser.Processor.ProcessWebSiteAsync("https://www.wellsfargo.com/mortgage/cost-of-savings-index/");
+
+            //var res = await ArmRateParser.Processor.ProcessWebSiteAsync("https://www.wellsfargo.com/mortgage/cost-of-savings-index/");
+            
+            var res = await ArmRateParser.Processor.ProcessWebSiteAsync("https://www.wsj.com/market-data/bonds/moneyrates");
             
             Console.WriteLine(Newtonsoft.Json.JsonConvert.SerializeObject(res));
             //}
